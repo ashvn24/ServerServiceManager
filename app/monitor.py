@@ -16,6 +16,7 @@ def get_services():
                 parts = line.split()
                 if parts:
                     services.append(parts[0])
+                    print(services)
         except Exception as e:
             log_event(f"Error listing Linux services: {e}")
     elif system == "Windows":

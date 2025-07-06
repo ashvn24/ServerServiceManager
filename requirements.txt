@@ -2,4 +2,6 @@ fastapi
 uvicorn
 openai
 psutil
-python-dotenv 
+python-dotenv
+scikit-learn
+numpy 
