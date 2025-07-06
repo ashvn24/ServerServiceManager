@@ -10,15 +10,16 @@ def get_services():
     if system == "Linux":
         try:
             result = subprocess.run([
-                "systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend"
+                "find", "/etc/systemd/system", "-maxdepth", "1", "-name", "*.service", "-printf", "%f\n"
             ], capture_output=True, text=True)
             for line in result.stdout.splitlines():
-                parts = line.split()
-                if parts:
-                    services.append(parts[0])
+                if line.strip():
+                    # Remove the .service extension to get just the service name
+                    service_name = line.strip().replace('.service', '')
+                    services.append(service_name)
                     print(services)
         except Exception as e:
-            log_event(f"Error listing Linux services: {e}")
+            log_event(f"Error listing Linux user services: {e}")
     elif system == "Windows":
         try:
             for service in psutil.win_service_iter():
