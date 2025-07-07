@@ -5,9 +5,9 @@ from .ai_fix import ai_fix_service
 from .logger import log_event
 from .config import MONITOR_INTERVAL
 
-def monitor_and_fix():
+def monitor_and_fix(selected_services=None):
     while True:
-        services = get_services()
+        services = selected_services if selected_services is not None else get_services()
         for service in services:
             status = check_service_status(service)
             if status not in ("active", "running"):
@@ -15,6 +15,6 @@ def monitor_and_fix():
                 ai_fix_service(service, f"Status: {status}")
         time.sleep(MONITOR_INTERVAL)
 
-def start_background_monitor():
-    t = threading.Thread(target=monitor_and_fix, daemon=True)
+def start_background_monitor(selected_services=None):
+    t = threading.Thread(target=monitor_and_fix, args=(selected_services,), daemon=True)
     t.start() 

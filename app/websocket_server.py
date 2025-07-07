@@ -14,13 +14,17 @@ from .logger import log_event
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
+        self.selected_services: Dict[WebSocket, List[str]] = {}  # Track selected services per connection
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        self.selected_services[websocket] = None  # None means all services by default
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
+        if websocket in self.selected_services:
+            del self.selected_services[websocket]
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
         await websocket.send_text(message)
@@ -30,8 +34,15 @@ class ConnectionManager:
             try:
                 await connection.send_text(message)
             except:
-                # Remove disconnected clients
                 self.active_connections.remove(connection)
+                if connection in self.selected_services:
+                    del self.selected_services[connection]
+
+    def set_selected_services(self, websocket: WebSocket, services: List[str]):
+        self.selected_services[websocket] = services
+
+    def get_selected_services(self, websocket: WebSocket):
+        return self.selected_services.get(websocket, None)
 
 manager = ConnectionManager()
 
@@ -65,40 +76,43 @@ def get_service_stats(service_name: str) -> Dict:
     
     return stats
 
-def get_all_services_stats() -> List[Dict]:
-    """Get statistics for all monitored services"""
-    services = get_services()
+def get_services_stats_for(websocket: WebSocket) -> List[Dict]:
+    selected = manager.get_selected_services(websocket)
+    all_services = get_services()
+    if selected is None:
+        services = all_services
+    else:
+        # Only include valid services
+        services = [s for s in selected if s in all_services]
     return [get_service_stats(service) for service in services]
 
 async def monitor_services_websocket():
     """Background task to monitor services and broadcast updates"""
     while True:
         try:
-            services_stats = get_all_services_stats()
-            message = {
-                "type": "services_update",
-                "data": services_stats,
-                "timestamp": time.time()
-            }
-            await manager.broadcast(json.dumps(message))
-            
-            # Check for any services that are down
-            for service in services_stats:
-                if service["status"] not in ("active", "running"):
-                    alert_message = {
-                        "type": "service_alert",
-                        "data": {
-                            "service": service["name"],
-                            "status": service["status"],
-                            "message": f"Service {service['name']} is not running. Status: {service['status']}"
-                        },
-                        "timestamp": time.time()
-                    }
-                    await manager.broadcast(json.dumps(alert_message))
-                    log_event(f"Service {service['name']} is not running. Status: {service['status']}")
-            
-            await asyncio.sleep(5)  # Update every 5 seconds
-            
+            for connection in list(manager.active_connections):
+                services_stats = get_services_stats_for(connection)
+                message = {
+                    "type": "services_update",
+                    "data": services_stats,
+                    "timestamp": time.time()
+                }
+                await manager.send_personal_message(json.dumps(message), connection)
+                # Check for any services that are down
+                for service in services_stats:
+                    if service["status"] not in ("active", "running"):
+                        alert_message = {
+                            "type": "service_alert",
+                            "data": {
+                                "service": service["name"],
+                                "status": service["status"],
+                                "message": f"Service {service['name']} is not running. Status: {service['status']}"
+                            },
+                            "timestamp": time.time()
+                        }
+                        await manager.send_personal_message(json.dumps(alert_message), connection)
+                        log_event(f"Service {service['name']} is not running. Status: {service['status']}")
+            await asyncio.sleep(5)
         except Exception as e:
             log_event(f"Error in WebSocket monitoring: {e}")
             await asyncio.sleep(5)
@@ -119,18 +133,28 @@ websocket_app.add_middleware(
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        # Send initial services data
-        services_stats = get_all_services_stats()
+        # Send initial services data (all services by default)
+        services_stats = get_services_stats_for(websocket)
         initial_message = {
             "type": "initial_data",
             "data": services_stats,
             "timestamp": time.time()
         }
         await manager.send_personal_message(json.dumps(initial_message), websocket)
-        
-        # Keep connection alive
+        # Listen for service selection messages
         while True:
-            await websocket.receive_text()
+            msg = await websocket.receive_text()
+            try:
+                data = json.loads(msg)
+                if data.get("type") == "select_services":
+                    # Update selected services for this connection
+                    services = data.get("services", None)
+                    if isinstance(services, list):
+                        manager.set_selected_services(websocket, services)
+                    else:
+                        manager.set_selected_services(websocket, None)  # None means all
+            except Exception as e:
+                log_event(f"Error handling WebSocket message: {e}")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
