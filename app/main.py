@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .logger import get_logs, get_logs_by_service
 from .auto_monitor import start_background_monitor
-from .websocket_server import websocket_app
+from .websocket_server import websocket_app, GLOBAL_MONITORED_SERVICES
 from .monitor import get_services, check_service_status
 import psutil
 import time
@@ -68,6 +68,10 @@ def get_system_metrics():
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "timestamp": time.time()}
+
+@app.get("/monitored_services")
+def get_monitored_services():
+    return {"monitored_services": GLOBAL_MONITORED_SERVICES}
 
 @app.on_event("startup")
 def startup_event():

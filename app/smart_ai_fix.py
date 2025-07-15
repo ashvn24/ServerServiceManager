@@ -1,5 +1,5 @@
-from openai import OpenAI
-from .config import OPENAI_API_KEY
+import google.generativeai as genai
+from .config import GEMINI_API_KEY
 from .logger import log_event
 from .ml_error_model import MLErrorModel
 from .error_learner import ErrorLearner
@@ -8,7 +8,7 @@ import platform
 import time
 from typing import Dict, Optional, Tuple, List
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 ml_model = MLErrorModel()
 error_learner = ErrorLearner()
 
@@ -102,7 +102,7 @@ class SmartAIFix:
         return None, "", "Failed to generate fix"
     
     def _call_ai_for_fix(self, service_name: str, error_message: str) -> Optional[Tuple[str, str, str]]:
-        """Call AI to generate a fix"""
+        """Call Gemini to generate a fix"""
         prompt = f"""
 Service '{service_name}' has failed with error: {error_message}
 
@@ -116,30 +116,18 @@ Consider common service issues like:
 
 Only output the command, nothing else.
 """
-        
         try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that provides shell commands to fix service issues. Only respond with the command, no explanations."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=100,
-                temperature=0.2
-            )
-            
-            content = response.choices[0].message.content
-            if content is None:
-                log_event(f"AI fix failed for {service_name}: No response content")
+            model = genai.GenerativeModel('gemini-1.5-pro')
+            response = model.generate_content(prompt)
+            content = response.text if hasattr(response, 'text') else None
+            if not content:
+                log_event(f"Gemini fix failed for {service_name}: No response content")
                 return None
-            
             command = content.strip()
-            log_event(f"AI suggested fix for {service_name}: {command}")
-            
+            log_event(f"Gemini suggested fix for {service_name}: {command}")
             return command, "", ""
-            
         except Exception as e:
-            log_event(f"AI fix failed for {service_name}: {e}")
+            log_event(f"Gemini fix failed for {service_name}: {e}")
             return None
     
     def _record_fix_attempt(self, service_name: str, error_message: str, command: str, 

@@ -10,16 +10,42 @@ import platform
 import subprocess
 from .monitor import get_services, check_service_status
 from .logger import log_event
+import os
+import json as jsonlib
+
+MONITORED_SERVICES_FILE = os.path.join(os.path.dirname(__file__), 'monitored_services.json')
+
+def load_monitored_services():
+    if os.path.exists(MONITORED_SERVICES_FILE):
+        try:
+            with open(MONITORED_SERVICES_FILE, 'r') as f:
+                data = jsonlib.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            log_event(f"Error loading monitored services: {e}")
+    return []
+
+def save_monitored_services(services):
+    try:
+        with open(MONITORED_SERVICES_FILE, 'w') as f:
+            jsonlib.dump(services, f)
+    except Exception as e:
+        log_event(f"Error saving monitored services: {e}")
+
+# On startup, load the last saved monitored services
+GLOBAL_MONITORED_SERVICES = load_monitored_services()
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
-        self.selected_services: Dict[WebSocket, List[str]] = {}  # Track selected services per connection
+        self.selected_services: Dict[WebSocket, List[str]] = {}
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        self.selected_services[websocket] = None  # None means all services by default
+        # Use global monitored services as default
+        self.selected_services[websocket] = GLOBAL_MONITORED_SERVICES.copy() if GLOBAL_MONITORED_SERVICES else None
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
@@ -40,6 +66,10 @@ class ConnectionManager:
 
     def set_selected_services(self, websocket: WebSocket, services: List[str]):
         self.selected_services[websocket] = services
+        # Save globally for all users
+        save_monitored_services(services)
+        global GLOBAL_MONITORED_SERVICES
+        GLOBAL_MONITORED_SERVICES = services.copy() if services else []
 
     def get_selected_services(self, websocket: WebSocket):
         return self.selected_services.get(websocket, None)
