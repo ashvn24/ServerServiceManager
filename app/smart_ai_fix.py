@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 from .config import GEMINI_API_KEY
 from .logger import log_event
 from .ml_error_model import MLErrorModel
@@ -8,7 +8,7 @@ import platform
 import time
 from typing import Dict, Optional, Tuple, List
 
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 ml_model = MLErrorModel()
 error_learner = ErrorLearner()
 
@@ -117,8 +117,10 @@ Consider common service issues like:
 Only output the command, nothing else.
 """
         try:
-            model = genai.GenerativeModel('gemini-1.5-pro')
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
             content = response.text if hasattr(response, 'text') else None
             if not content:
                 log_event(f"Gemini fix failed for {service_name}: No response content")

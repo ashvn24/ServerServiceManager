@@ -1,11 +1,11 @@
-import google.generativeai as genai
+from google import genai
 from .config import GEMINI_API_KEY
 from .logger import log_event
 from .error_learner import ErrorLearner
 import subprocess
 import platform
 
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 error_learner = ErrorLearner()
 
 def ai_fix_service(service_name, error_message):
@@ -25,8 +25,10 @@ def ai_fix_service(service_name, error_message):
     # If no known fix, use Gemini
     prompt = f"Service '{service_name}' has failed with error: {error_message}. Suggest a shell command to fix and restart the service on {platform.system()}. Only output the command, nothing else."
     try:
-        model = genai.GenerativeModel('gemini-1.5-pro')
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         content = response.text if hasattr(response, 'text') else None
         if not content:
             log_event(f"Gemini fix failed for {service_name}: No response content")
