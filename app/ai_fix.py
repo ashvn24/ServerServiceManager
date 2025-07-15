@@ -5,9 +5,21 @@ from .error_learner import ErrorLearner
 import subprocess
 import platform
 import multiprocessing
+import redis
+import json
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 error_learner = ErrorLearner()
+
+# Configure your Redis connection
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
+
+def queue_service_restart(service_name, error_message):
+    msg = {
+        "service_name": service_name,
+        "error_message": error_message
+    }
+    redis_client.rpush("service_restart_queue", json.dumps(msg))
 
 def gemini_generate_content(prompt, queue):
     try:
