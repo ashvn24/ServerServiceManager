@@ -4,9 +4,23 @@ from .logger import log_event
 from .error_learner import ErrorLearner
 import subprocess
 import platform
+import multiprocessing
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 error_learner = ErrorLearner()
+
+def gemini_generate_content(prompt, queue):
+    try:
+        from google import genai
+        client = genai.Client()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        content = response.text if hasattr(response, 'text') else None
+        queue.put(content)
+    except Exception as e:
+        queue.put(None)
 
 def ai_fix_service(service_name, error_message):
     # First, check if we have a known fix for this error
@@ -22,29 +36,29 @@ def ai_fix_service(service_name, error_message):
         
         return known_fix, result.stdout, result.stderr
     
-    # If no known fix, use Gemini
+    # If no known fix, use Gemini in a subprocess
     prompt = f"Service '{service_name}' has failed with error: {error_message}. Suggest a shell command to fix and restart the service on {platform.system()}. Only output the command, nothing else."
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        content = response.text if hasattr(response, 'text') else None
-        if not content:
-            log_event(f"Gemini fix failed for {service_name}: No response content")
-            return None, None, "No response content"
-        command = content.strip()
-        log_event(f"Gemini suggested fix for {service_name}: {command}")
-        # Execute the command
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        log_event(f"Executed fix for {service_name}: {result.stdout} {result.stderr}")
-        # Learn from this attempt
-        success = result.returncode == 0
-        error_learner.learn_fix(service_name, error_message, command, success, result.stdout, result.stderr)
-        return command, result.stdout, result.stderr
-    except Exception as e:
-        log_event(f"Gemini fix failed for {service_name}: {e}")
-        return None, None, str(e)
+    queue = multiprocessing.Queue()
+    p = multiprocessing.Process(target=gemini_generate_content, args=(prompt, queue))
+    p.start()
+    p.join(timeout=30)  # 30 seconds timeout
+    if p.is_alive():
+        p.terminate()
+        log_event(f"Gemini fix timed out for {service_name}")
+        return None, None, "Gemini API call timed out"
+    content = queue.get() if not queue.empty() else None
+    if not content:
+        log_event(f"Gemini fix failed for {service_name}: No response content")
+        return None, None, "No response content"
+    command = content.strip()
+    log_event(f"Gemini suggested fix for {service_name}: {command}")
+    # Execute the command
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    log_event(f"Executed fix for {service_name}: {result.stdout} {result.stderr}")
+    # Learn from this attempt
+    success = result.returncode == 0
+    error_learner.learn_fix(service_name, error_message, command, success, result.stdout, result.stderr)
+    return command, result.stdout, result.stderr
 
 def get_learning_stats():
     """Get and display learning statistics"""

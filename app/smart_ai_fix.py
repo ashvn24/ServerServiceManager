@@ -7,10 +7,24 @@ import subprocess
 import platform
 import time
 from typing import Dict, Optional, Tuple, List
+import multiprocessing
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 ml_model = MLErrorModel()
 error_learner = ErrorLearner()
+
+def gemini_generate_content(prompt, queue):
+    try:
+        from google import genai
+        client = genai.Client()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        content = response.text if hasattr(response, 'text') else None
+        queue.put(content)
+    except Exception as e:
+        queue.put(None)
 
 class SmartAIFix:
     def __init__(self):
@@ -102,7 +116,7 @@ class SmartAIFix:
         return None, "", "Failed to generate fix"
     
     def _call_ai_for_fix(self, service_name: str, error_message: str) -> Optional[Tuple[str, str, str]]:
-        """Call Gemini to generate a fix"""
+        """Call Gemini to generate a fix in a subprocess"""
         prompt = f"""
 Service '{service_name}' has failed with error: {error_message}
 
@@ -116,21 +130,21 @@ Consider common service issues like:
 
 Only output the command, nothing else.
 """
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-            )
-            content = response.text if hasattr(response, 'text') else None
-            if not content:
-                log_event(f"Gemini fix failed for {service_name}: No response content")
-                return None
-            command = content.strip()
-            log_event(f"Gemini suggested fix for {service_name}: {command}")
-            return command, "", ""
-        except Exception as e:
-            log_event(f"Gemini fix failed for {service_name}: {e}")
+        queue = multiprocessing.Queue()
+        p = multiprocessing.Process(target=gemini_generate_content, args=(prompt, queue))
+        p.start()
+        p.join(timeout=30)  # 30 seconds timeout
+        if p.is_alive():
+            p.terminate()
+            log_event(f"Gemini fix timed out for {service_name}")
             return None
+        content = queue.get() if not queue.empty() else None
+        if not content:
+            log_event(f"Gemini fix failed for {service_name}: No response content")
+            return None
+        command = content.strip()
+        log_event(f"Gemini suggested fix for {service_name}: {command}")
+        return command, "", ""
     
     def _record_fix_attempt(self, service_name: str, error_message: str, command: str, 
                            success: bool, execution_time: float, method: str):
